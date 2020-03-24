@@ -14,14 +14,19 @@ import { IJSONSchema, IJSONSchemaMap } from 'vs/base/common/jsonSchema';
 
 export const TOKEN_TYPE_WILDCARD = '*';
 
+export const TOKEN_TYPE_LANGUAGE_SEPARATOR = '/';
+
 // qualified string [type|*](.modifier)*
 export type TokenClassificationString = string;
 
-export const typeAndModifierIdPattern = '^\\w+[-_\\w+]*$';
+export const idPattern = '\\w+[-_\\w+]*';
+export const typeAndModifierIdPattern = `^${idPattern}$`;
 export const fontStylePattern = '^(\\s*(-?italic|-?bold|-?underline))*\\s*$';
 
+
+
 export interface TokenSelector {
-	match(type: string, modifiers: string[]): number;
+	match(type: string, modifiers: string[], language: string): number;
 	readonly selectorString: string;
 }
 
@@ -269,9 +274,9 @@ class TokenClassificationRegistry implements ITokenClassificationRegistry {
 	}
 
 	public parseTokenSelector(selectorString: string): TokenSelector {
-		const [selectorType, ...selectorModifiers] = selectorString.split('.');
+		const selector = parseClassifierString(selectorString);
 
-		if (!selectorType) {
+		if (!selector.type) {
 			return {
 				match: () => -1,
 				selectorString
@@ -279,23 +284,29 @@ class TokenClassificationRegistry implements ITokenClassificationRegistry {
 		}
 
 		return {
-			match: (type: string, modifiers: string[]) => {
+			match: (type: string, modifiers: string[], language: string) => {
 				let score = 0;
-				if (selectorType !== TOKEN_TYPE_WILDCARD) {
+				if (selector.language !== undefined) {
+					if (selector.language !== language) {
+						return -1;
+					}
+					score += 100;
+				}
+				if (selector.type !== TOKEN_TYPE_WILDCARD) {
 					const hierarchy = this.getTypeHierarchy(type);
-					const level = hierarchy.indexOf(selectorType);
+					const level = hierarchy.indexOf(selector.type);
 					if (level === -1) {
 						return -1;
 					}
-					score = 100 - level;
+					score += (100 - level);
 				}
 				// all selector modifiers must be present
-				for (const selectorModifier of selectorModifiers) {
+				for (const selectorModifier of selector.modifiers) {
 					if (modifiers.indexOf(selectorModifier) === -1) {
 						return -1;
 					}
 				}
-				return score + selectorModifiers.length * 100;
+				return score + selector.modifiers.length * 100;
 			},
 			selectorString
 		};
@@ -366,15 +377,23 @@ class TokenClassificationRegistry implements ITokenClassificationRegistry {
 
 }
 
+export function parseClassifierString(s: string): { type: string, modifiers: string[], language: string | undefined; } {
+	const [typeAndLanguage, ...modifiers] = s.split('.');
+	const [type, language] = typeAndLanguage.split(TOKEN_TYPE_LANGUAGE_SEPARATOR);
+	return { type, modifiers, language };
+}
 
-const tokenClassificationRegistry = new TokenClassificationRegistry();
+
+let tokenClassificationRegistry = createDefaultTokenClassificationRegistry();
 platform.Registry.add(Extensions.TokenClassificationContribution, tokenClassificationRegistry);
 
-registerDefaultClassifications();
 
-function registerDefaultClassifications(): void {
+function createDefaultTokenClassificationRegistry(): TokenClassificationRegistry {
+
+	const registry = new TokenClassificationRegistry();
+
 	function registerTokenType(id: string, description: string, scopesToProbe: ProbeScope[] = [], superType?: string, deprecationMessage?: string): string {
-		tokenClassificationRegistry.registerTokenType(id, description, superType, deprecationMessage);
+		registry.registerTokenType(id, description, superType, deprecationMessage);
 		if (scopesToProbe) {
 			registerTokenStyleDefault(id, scopesToProbe);
 		}
@@ -383,8 +402,8 @@ function registerDefaultClassifications(): void {
 
 	function registerTokenStyleDefault(selectorString: string, scopesToProbe: ProbeScope[]) {
 		try {
-			const selector = tokenClassificationRegistry.parseTokenSelector(selectorString);
-			tokenClassificationRegistry.registerTokenStyleDefault(selector, { scopesToProbe });
+			const selector = registry.parseTokenSelector(selectorString);
+			registry.registerTokenStyleDefault(selector, { scopesToProbe });
 		} catch (e) {
 			console.log(e);
 		}
@@ -422,18 +441,20 @@ function registerDefaultClassifications(): void {
 
 	// default token modifiers
 
-	tokenClassificationRegistry.registerTokenModifier('declaration', nls.localize('declaration', "Style for all symbol declarations."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('documentation', nls.localize('documentation', "Style to use for references in documentation."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('static', nls.localize('static', "Style to use for symbols that are static."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('abstract', nls.localize('abstract', "Style to use for symbols that are abstract."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('deprecated', nls.localize('deprecated', "Style to use for symbols that are deprecated."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('modification', nls.localize('modification', "Style to use for write accesses."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('async', nls.localize('async', "Style to use for symbols that are async."), undefined);
-	tokenClassificationRegistry.registerTokenModifier('readonly', nls.localize('readonly', "Style to use for symbols that are readonly."), undefined);
+	registry.registerTokenModifier('declaration', nls.localize('declaration', "Style for all symbol declarations."), undefined);
+	registry.registerTokenModifier('documentation', nls.localize('documentation', "Style to use for references in documentation."), undefined);
+	registry.registerTokenModifier('static', nls.localize('static', "Style to use for symbols that are static."), undefined);
+	registry.registerTokenModifier('abstract', nls.localize('abstract', "Style to use for symbols that are abstract."), undefined);
+	registry.registerTokenModifier('deprecated', nls.localize('deprecated', "Style to use for symbols that are deprecated."), undefined);
+	registry.registerTokenModifier('modification', nls.localize('modification', "Style to use for write accesses."), undefined);
+	registry.registerTokenModifier('async', nls.localize('async', "Style to use for symbols that are async."), undefined);
+	registry.registerTokenModifier('readonly', nls.localize('readonly', "Style to use for symbols that are readonly."), undefined);
 
 
 	registerTokenStyleDefault('variable.readonly', [['variable.other.constant']]);
 	registerTokenStyleDefault('property.readonly', [['variable.other.constant.property']]);
+
+	return registry;
 }
 
 export function getTokenClassificationRegistry(): ITokenClassificationRegistry {
