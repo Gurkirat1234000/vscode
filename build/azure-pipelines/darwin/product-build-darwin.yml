@@ -120,6 +120,7 @@ steps:
     set -e
     yarn test-browser --build --browser chromium --browser webkit
   displayName: Run unit tests (Browser)
+  continueOnError: true
   condition: and(succeeded(), eq(variables['VSCODE_STEP_ON_IT'], 'false'))
 
 - script: |
